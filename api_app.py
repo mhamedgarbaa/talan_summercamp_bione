@@ -64,6 +64,7 @@ def preprocess_content(text):
     text = text.replace('\n', ' ')
     return text
 
+#input body form-data pdf_file then upload
 @api_app.post("/process_pdf")
 async def process_pdf(pdf_file: UploadFile = File(...)):
     if not pdf_file:
@@ -116,6 +117,7 @@ def preprocess_content(text):
 class DocumentRequest(BaseModel):
     urls: List[str]
 
+#input 
 @api_app.post("/process_urls")
 async def process_documents(request: DocumentRequest):
     urls = request.urls
