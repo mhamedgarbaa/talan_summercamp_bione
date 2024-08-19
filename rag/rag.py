@@ -1,6 +1,7 @@
 import os
 import re
 from langchain_nomic.embeddings import NomicEmbeddings
+#from api_app import process_dna, query_rag_model, fold_sequence
 
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_ENDPOINT"] = "https://api.smith.langchain.com"
@@ -48,7 +49,7 @@ prompt1 = PromptTemplate(
     grade it as relevant. It does not need to be a stringent test. The goal is to filter out erroneous retrievals. \n
     Give a binary score 'yes' or 'no' score to indicate whether the document is relevant to the question. \n
     Provide the binary score as a JSON with a single key 'score' and no premable or explanation.
-     <|eot_id|><|start_header_id|>user<|end_header_id|>
+    <|eot_id|><|start_header_id|>user<|end_header_id|>
     Here is the retrieved document: \n\n {document} \n\n
     Here is the user question: {question} \n <|eot_id|><|start_header_id|>assistant<|end_header_id|>
     """,
@@ -72,7 +73,7 @@ from langchain_core.prompts import PromptTemplate
 prompt2 = PromptTemplate(
     template="""<|begin_of_text|><|start_header_id|>system<|end_header_id|> You are an assistant for question-answering tasks. 
     Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. 
-    Use three sentences maximum and keep the answer concise <|eot_id|><|start_header_id|>user<|end_header_id|>
+    Use seven sentences maximum and keep the answer concise <|eot_id|><|start_header_id|>user<|end_header_id|>
     Question: {question} 
     Context: {context} 
     Answer: <|eot_id|><|start_header_id|>assistant<|end_header_id|>""",
@@ -148,11 +149,40 @@ answer_grader = prompt4 | llm4 | JsonOutputParser()
 from langchain_community.chat_models import ChatOllama
 from langchain_core.output_parsers import JsonOutputParser
 from langchain_core.prompts import PromptTemplate
+import httpx
+
 
 # LLM
 llm5 = ChatOllama(model=local_llm, format="json", temperature=0)
 
 prompt5 = PromptTemplate(
+    template="""
+    You are an expert at routing a user's or biologist's request to the appropriate API based on the input data. 
+    Analyze the input and determine which API should handle the request. In fact to which model should be routed,
+    Choose one of the following options:
+    - "query" for general biology questions provided by the user or the biologist : if the input field is a simple question
+    dedicated to the biology domain generate a JSON with a single key "question" and no preamble or explanation
+    containing the question. For example :  "input" : "what is biology?", "api_endpoint" : "query" as json
+    - "process_dna" for DNA sequences (input containing only the characters A, G, T, or C) extract the DNA sequence from
+    the input by the user or the biologist and remove all exclamations and interrogations marks, it means you should extract a substring
+     and assure  and generate a JSON with a single key  "sequence" and no preamble or explanation
+    containg the DNA sequence. For example :  "input" : "AGTC", "api_endpoint" : "process_dna" as json
+    - "esm" for protein sequences (typically longer sequences with 20 standard amino acid codes) extract the protein sequence 
+    from the input by the user or the biologist and generate a JSON with a single key "sequence" and no preamble or explanation
+    containing the protein sequence. For example : "input" : "GENGEIPLEIRATTGAEVDTRAVTAVEMTEGTLGIFRLPEEDYTALENFRYNRVAGENWKPASTVIYVGGTYARLCAYAPYNSVEFKNSSLKTEAGLTMQTYAAEKDMRFAVSGGDEVWKKTPTANFELKRAYARLVLSVVRDATYPNTCKITKAKIEAFTGNIITANTVDISTGTEGSGTQTPQYIHTVTTGLKDGFAIGLPQQTFSGGVVLTLTVDGMEYSVTIPANKLSTFVRGTKYIVSLAVKGGKLTLMSDKILIDKDWAEVQTGTGGSGDDYDTSFN", "api_endpoint" : "esm" as json
+    Return the appropriate API endpoint in a JSON format with the key 'api_endpoint' containing the input of the API.
+
+    Input: {input}
+    assistant
+    """,
+    input_variables=["input"],
+)
+
+question_router = prompt5 | llm5 | JsonOutputParser()
+
+llm6 = ChatOllama(model=local_llm, format="json", temperature=0)
+
+prompt6 = PromptTemplate(
     template="""<|begin_of_text|><|start_header_id|>system<|end_header_id|> You are an expert at routing a 
     user question to a vectorstore or web search. Use the vectorstore for questions on biology and biotechnology. You do not need to be stringent with the keywords 
     in the question related to these topics. Otherwise, use web-search. Give a binary choice 'web_search' 
@@ -161,12 +191,18 @@ prompt5 = PromptTemplate(
     input_variables=["question"],
 )
 
-question_router = prompt5 | llm5 | JsonOutputParser()
-# question = "llm agent memory"
-# docs = retriever.get_relevant_documents(question)
-# doc_txt = docs[1].page_content
-# print(question_router.invoke({"question": question}))
+question_routerS = prompt6 | llm6 | JsonOutputParser()
 
+
+async def handle_request(input_data: dict):
+    print(input_data)
+    routing_decision = question_router.invoke(input=input_data)
+    print(routing_decision)
+    api_endpoint = routing_decision["api_endpoint"]
+    print(api_endpoint)
+    data = routing_decision["input"]
+    print(data)
+    return routing_decision
 
 
 ### Search
@@ -322,7 +358,7 @@ def route_question(state):
     print("---ROUTE QUESTION---")
     question = state["question"]
     print(question)
-    source = question_router.invoke({"question": question})
+    source = question_routerS.invoke({"question": question})
     print(source)
     print(source["datasource"])
     if source["datasource"] == "web_search":
